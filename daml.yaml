@@ -1,0 +1,8 @@
+sdk-version: 2.4.0
+name: paint-transaction
+version: 1.0.0
+source: daml
+dependencies:
+- daml-prim
+- daml-stdlib
+- daml-script

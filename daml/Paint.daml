@@ -1,0 +1,117 @@
+module Paint where
+
+import Daml.Script
+
+template Master
+  with
+    issuer: Party
+  where
+    signatory issuer
+  
+    nonconsuming choice Invite: ContractId Proposal
+      with 
+        owner: Party
+        amount: Decimal
+        bank: Bank
+      controller issuer
+      do
+        create Proposal with agreement_ = Agreement with issuer, owner, ..
+
+
+template Proposal
+  with
+    agreement_: Agreement
+  where
+    signatory agreement_.issuer
+    observer agreement_.owner
+  
+    choice Accept: ContractId Agreement
+      controller agreement_.owner
+      do create agreement_
+
+template Agreement
+  with
+    issuer: Party
+    owner: Party
+    amount: Decimal
+    bank: Bank
+  where 
+    signatory issuer, owner
+    observer bank.owner
+
+    choice After: ()
+      controller bank.owner
+      do
+        (bid,b) <- fetchByKey @Bank bank.owner
+        exercise bid Transfer with sender=issuer,receiver = owner, amount
+
+    
+template Wallet
+  with
+    owner: Party
+    balance: Decimal
+    bank: Bank
+  where
+    signatory owner
+    observer bank.owner
+    ensure balance > 0.0
+
+    key owner: Party
+    maintainer key
+
+    choice Get: ContractId Wallet 
+      with
+        amount: Decimal
+      controller bank.owner
+      do
+        create this with balance = balance + amount
+
+template Bank 
+  with
+    owner: Party
+  where
+    signatory owner
+
+    key owner: Party
+    maintainer key
+    
+    nonconsuming choice Transfer: ()
+      with
+        sender: Party
+        receiver: Party
+        amount: Decimal
+      controller owner
+      do
+        (w1Id, w1) <- fetchByKey @Wallet sender
+        (w2Id, w2) <- fetchByKey @Wallet receiver
+
+        exercise w1Id Get with amount = -amount
+        exercise w2Id Get with ..
+
+        pure()
+
+
+
+
+
+test = script do
+  owner <- allocateParty "owner"
+  bankId <- submit owner do createCmd Bank with owner
+  Some b <- queryContractId owner bankId
+
+  users@[a1, a2] <- mapA allocateParty ["a1", "a2"]
+  cw1 <- submit a1 do createCmd Wallet with owner = a1, balance = 100.0, bank = b
+  cw2 <-submit a2 do createCmd Wallet with owner = a2, balance = 100.0, bank = b
+  Some w1 <- queryContractId a1 cw1
+  Some w2 <- queryContractId a2 cw2
+
+  
+  m <- submit a1 do createCmd Master with issuer = a1
+  
+  proposalId <-submit a1 do exerciseCmd m Invite with owner = a2, amount = 50.0, bank = b
+
+  a <- submit a2 do exerciseCmd proposalId Accept 
+
+  v <- submit owner do exerciseCmd a After 
+
+  pure()
